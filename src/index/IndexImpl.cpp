@@ -3,6 +3,8 @@
 // Authors:
 //   2014-2017 Björn Buchhold (buchhold@informatik.uni-freiburg.de)
 //   2018-     Johannes Kalmbach (kalmbach@informatik.uni-freiburg.de)
+//
+// Copyright 2025, Bayerische Motoren Werke Aktiengesellschaft (BMW AG)
 
 #include "./IndexImpl.h"
 
@@ -105,7 +107,8 @@ auto lazyScanWithPermutedColumns(auto& sorterPtr, auto columnIndices) {
 auto lazyOptionalJoinOnFirstColumn(auto& leftInput, auto& rightInput,
                                    auto resultCallback) {
   auto projection = [](const auto& row) -> Id { return row[0]; };
-  auto projectionForComparator = []<typename T>(const T& rowOrId) -> const Id& {
+  auto projectionForComparator = [](const auto& rowOrId) -> const Id& {
+    using T = std::decay_t<decltype(rowOrId)>;
     if constexpr (ad_utility::SimilarTo<T, Id>) {
       return rowOrId;
     } else {
@@ -866,7 +869,8 @@ size_t IndexImpl::createPermutationPair(size_t numColumns,
 }
 
 // _____________________________________________________________________________
-void IndexImpl::createFromOnDiskIndex(const string& onDiskBase) {
+void IndexImpl::createFromOnDiskIndex(const string& onDiskBase,
+                                      bool persistUpdatesOnDisk) {
   setOnDiskBase(onDiskBase);
   readConfiguration();
   vocab_.readFromFile(onDiskBase_ + VOCAB_SUFFIX);
@@ -893,11 +897,16 @@ void IndexImpl::createFromOnDiskIndex(const string& onDiskBase) {
   // TODO<joka921> We could delegate the setting of the metadata to the
   // `Permutation`class, but we first have to deal with The delta triples for
   // the additional permutations.
+  // The setting of the metadata doesn't affect the contents of the delta
+  // triples, so we don't need to call `writeToDisk`, therefore the second
+  // argument to `modify` is `false`.
   auto setMetadata = [this](const Permutation& p) {
-    deltaTriplesManager().modify<void>([&p](DeltaTriples& deltaTriples) {
-      deltaTriples.setOriginalMetadata(p.permutation(),
-                                       p.metaData().blockDataShared());
-    });
+    deltaTriplesManager().modify<void>(
+        [&p](DeltaTriples& deltaTriples) {
+          deltaTriples.setOriginalMetadata(p.permutation(),
+                                           p.metaData().blockDataShared());
+        },
+        false);
   };
 
   auto load = [this, &isInternalId, &setMetadata](
@@ -940,6 +949,10 @@ void IndexImpl::createFromOnDiskIndex(const string& onDiskBase) {
           << e.what() << std::endl;
       usePatterns_ = false;
     }
+  }
+  if (persistUpdatesOnDisk) {
+    deltaTriples_.value().setFilenameForPersistentUpdatesAndReadFromDisk(
+        onDiskBase + ".update-triples");
   }
 }
 
@@ -1107,10 +1120,11 @@ void IndexImpl::readConfiguration() {
         configurationJson_["languages-internal"]);
   }
 
-  auto loadDataMember = [this]<typename Target>(
-                            std::string_view key, Target& target,
-                            std::optional<std::type_identity_t<Target>>
-                                defaultValue = std::nullopt) {
+  auto loadDataMember = [this](std::string_view key, auto& target,
+                               std::optional<std::type_identity_t<
+                                   std::decay_t<decltype(target)>>>
+                                   defaultValue = std::nullopt) {
+    using Target = std::decay_t<decltype(target)>;
     auto it = configurationJson_.find(key);
     if (it == configurationJson_.end()) {
       if (defaultValue.has_value()) {
@@ -1133,6 +1147,10 @@ void IndexImpl::readConfiguration() {
   loadDataMember("num-objects", numObjects_, NumNormalAndInternal{});
   loadDataMember("num-triples", numTriples_, NumNormalAndInternal{});
   loadDataMember("num-non-literals-text-index", nofNonLiteralsInTextIndex_, 0);
+  loadDataMember("text-scoring-metric", textScoringMetric_,
+                 TextScoringMetric::EXPLICIT);
+  loadDataMember("b-and-k-parameter-for-text-scoring",
+                 bAndKParamForTextScoring_, std::make_pair(0.75, 1.75));
 
   // Initialize BlankNodeManager
   uint64_t numBlankNodesTotal;

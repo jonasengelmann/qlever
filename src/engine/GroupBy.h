@@ -2,8 +2,11 @@
 // Chair of Algorithms and Data Structures.
 // Authors: Florian Kramer [2018]
 //          Johannes Kalmbach <kalmbach@cs.uni-freiburg.de>
+//
+// Copyright 2025, Bayerische Motoren Werke Aktiengesellschaft (BMW AG)
 
-#pragma once
+#ifndef QLEVER_SRC_ENGINE_GROUPBY_H
+#define QLEVER_SRC_ENGINE_GROUPBY_H
 
 #include <gtest/gtest_prod.h>
 
@@ -98,7 +101,7 @@ class GroupBy : public Operation {
   // Helper function to create evaluation contexts in various places for the
   // GROUP BY operation.
   sparqlExpression::EvaluationContext createEvaluationContext(
-      const LocalVocab& localVocab, const IdTable& idTable) const;
+      LocalVocab& localVocab, const IdTable& idTable) const;
 
   Result computeResult(bool requestLaziness) override;
 
@@ -351,8 +354,9 @@ class GroupBy : public Operation {
       for (const auto& alias : aggregateAliases) {
         for (const auto& aggregate : alias.aggregateInfo_) {
           using namespace ad_utility::use_type_identity;
-          auto addIf = [this, &aggregate]<typename T>(
-                           TI<T>, HashMapAggregateType target) {
+          auto addIf = [this, &aggregate](auto ti,
+                                          HashMapAggregateType target) {
+            using T = typename decltype(ti)::type;
             if (aggregate.aggregateType_.type_ == target)
               aggregationData_.emplace_back(
                   sparqlExpression::VectorWithMemoryLimit<T>{alloc_});
@@ -595,3 +599,5 @@ template <typename A>
 concept VectorOfAggregationData =
     ad_utility::SameAsAnyTypeIn<A, GroupBy::AggregationDataVectors>;
 }
+
+#endif  // QLEVER_SRC_ENGINE_GROUPBY_H
